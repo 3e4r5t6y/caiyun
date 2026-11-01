@@ -148,14 +148,15 @@ func WithCircuitBreakerConfig(config CircuitBreakerConfig) ClientOption {
 	}
 }
 
-// RequestOption controls opt-in retry behavior for a single request.
+// RequestOption controls retry and credential behavior for a single request.
 // Safe methods (GET, HEAD and OPTIONS) retry by default; all other methods
 // require an explicit idempotency guarantee.
 type RequestOption func(*requestOptions)
 
 type requestOptions struct {
-	idempotencyKey string
-	timeout        time.Duration
+	idempotencyKey            string
+	timeout                   time.Duration
+	disableAccountCredentials bool
 }
 
 // WithRequestTimeout overrides the timeout for this request, including body reads,
@@ -173,6 +174,15 @@ func WithIdempotencyKey(key string) RequestOption {
 		if key != "" {
 			options.idempotencyKey = key
 		}
+	}
+}
+
+// WithoutAccountCredentials suppresses account Authorization/JWT headers and
+// the shared cookie jar for a single request. Use it for login endpoints that
+// establish credentials through their request body.
+func WithoutAccountCredentials() RequestOption {
+	return func(options *requestOptions) {
+		options.disableAccountCredentials = true
 	}
 }
 
@@ -510,9 +520,14 @@ func (c *Client) RequestWithContextOptions(ctx context.Context, method, reqURL s
 		}
 	}
 	requestClient := c.client
-	if requestOptions.timeout > 0 {
+	if requestOptions.timeout > 0 || requestOptions.disableAccountCredentials {
 		localClient := *c.client
-		localClient.Timeout = requestOptions.timeout
+		if requestOptions.timeout > 0 {
+			localClient.Timeout = requestOptions.timeout
+		}
+		if requestOptions.disableAccountCredentials {
+			localClient.Jar = nil
+		}
 		requestClient = &localClient
 	}
 
@@ -575,6 +590,14 @@ func (c *Client) RequestWithContextOptions(ctx context.Context, method, reqURL s
 		}
 
 		allHeaders := c.buildHeaders(reqURL, headers)
+		if requestOptions.disableAccountCredentials {
+			for key := range allHeaders {
+				switch strings.ToLower(key) {
+				case "authorization", "jwttoken", "jwt-token", "cookie":
+					delete(allHeaders, key)
+				}
+			}
+		}
 		if requestOptions.idempotencyKey != "" {
 			allHeaders["Idempotency-Key"] = requestOptions.idempotencyKey
 		}

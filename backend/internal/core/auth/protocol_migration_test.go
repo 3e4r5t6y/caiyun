@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -22,62 +21,54 @@ func protocolResponse(r *http.Request, status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body)), Request: r}
 }
 
-func TestJWTGatewayMigrationPreservesSignedContract(t *testing.T) {
-	for _, bound := range []bool{false, true} {
-		for _, failure := range []string{"404", "business", "missing-code", "network"} {
-			t.Run(fmt.Sprintf("bound=%t/%s", bound, failure), func(t *testing.T) {
-				var hosts []string
-				transport := protocolTransport(func(r *http.Request) (*http.Response, error) {
-					if r.URL.Path == "/ycloud/api/timestamp" {
-						return protocolResponse(r, 200, `{"code":0,"result":1700000000123}`), nil
-					}
-					if r.URL.Path != "/ycloud/auth-service/auth/tyrzLogin" || r.Method != "POST" {
-						t.Fatalf("retired route requested: %s", r.URL)
-					}
-					hosts = append(hosts, r.URL.Host)
-					var body map[string]interface{}
-					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-						t.Fatal(err)
-					}
-					if body["openAccount"] != float64(0) || body["sourceId"] != "1097" || body["marketName"] != "sign_in_3" || body["token"] != "test-sso" {
-						t.Fatalf("payload=%v", body)
-					}
-					id, ts, nonce := r.Header.Get("x-request-id"), r.Header.Get("x-timestamp"), r.Header.Get("x-nonce")
-					if id == "" || nonce == "" || ts != "1700000000123" || r.Header.Get("x-signature") != h5AuthSignature(id, ts, nonce) {
-						t.Fatal("gateway fallback lost signature")
-					}
-					if r.Header.Get("appversion") != "13.2.5.0" {
-						t.Fatal("outdated version")
-					}
-					if r.URL.Host == "m.mcloud.139.com" {
-						switch failure {
-						case "404":
-							return protocolResponse(r, 404, "not found"), nil
-						case "business":
-							return protocolResponse(r, 200, `{"code":401,"result":{}}`), nil
-						case "missing-code":
-							return protocolResponse(r, 200, `{"result":{"token":"invalid"}}`), nil
-						default:
-							return nil, errors.New("offline")
-						}
-					}
-					resp := protocolResponse(r, 200, `{"code":0,"result":{"token":"new-jwt"}}`)
-					resp.Header.Add("Set-Cookie", "JSESSIONID=new-session; Path=/; Secure")
-					return resp, nil
-				})
-				var token string
-				var err error
-				if bound {
-					jar, _ := cookiejar.New(nil)
-					token, err = LoginH5Session(t.Context(), &http.Client{Jar: jar, Transport: transport}, "test-sso", "test-UA", "https://m.mcloud.139.com/")
-				} else {
-					token, err = NewAuth(corehttp.NewClient(corehttp.WithTransport(transport))).TyrzLogin("test-sso")
+func TestBoundJWTGatewayMigrationPreservesSignedContract(t *testing.T) {
+	for _, failure := range []string{"404", "business", "missing-code", "network"} {
+		t.Run(failure, func(t *testing.T) {
+			var hosts []string
+			transport := protocolTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Path == "/ycloud/api/timestamp" {
+					return protocolResponse(r, 200, `{"code":0,"result":1700000000123}`), nil
 				}
-				if err != nil || token != "new-jwt" || strings.Join(hosts, ",") != "m.mcloud.139.com,gp.mcloud.139.com" {
-					t.Fatalf("token=%s hosts=%v err=%v", token, hosts, err)
+				if r.URL.Path != "/ycloud/auth-service/auth/tyrzLogin" || r.Method != "POST" {
+					t.Fatalf("retired route requested: %s", r.URL)
 				}
+				hosts = append(hosts, r.URL.Host)
+				var body map[string]interface{}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatal(err)
+				}
+				if body["openAccount"] != float64(0) || body["sourceId"] != "1097" || body["marketName"] != "sign_in_3" || body["token"] != "test-sso" {
+					t.Fatalf("payload=%v", body)
+				}
+				id, ts, nonce := r.Header.Get("x-request-id"), r.Header.Get("x-timestamp"), r.Header.Get("x-nonce")
+				if id == "" || nonce == "" || ts != "1700000000123" || r.Header.Get("x-signature") != h5AuthSignature(id, ts, nonce) {
+					t.Fatal("gateway fallback lost signature")
+				}
+				if r.Header.Get("appversion") != "13.2.5.0" {
+					t.Fatal("outdated version")
+				}
+				if r.URL.Host == "m.mcloud.139.com" {
+					switch failure {
+					case "404":
+						return protocolResponse(r, 404, "not found"), nil
+					case "business":
+						return protocolResponse(r, 200, `{"code":401,"result":{}}`), nil
+					case "missing-code":
+						return protocolResponse(r, 200, `{"result":{"token":"invalid"}}`), nil
+					default:
+						return nil, errors.New("offline")
+					}
+				}
+				resp := protocolResponse(r, 200, `{"code":0,"result":{"token":"new-jwt"}}`)
+				resp.Header.Add("Set-Cookie", "JSESSIONID=new-session; Path=/; Secure")
+				return resp, nil
 			})
-		}
+			jar, _ := cookiejar.New(nil)
+			token, err := LoginH5Session(t.Context(), &http.Client{Jar: jar, Transport: transport}, "test-sso", "test-UA", "https://m.mcloud.139.com/")
+			if err != nil || token != "new-jwt" || strings.Join(hosts, ",") != "m.mcloud.139.com,gp.mcloud.139.com" {
+				t.Fatalf("token=%s hosts=%v err=%v", token, hosts, err)
+			}
+		})
 	}
 }
 

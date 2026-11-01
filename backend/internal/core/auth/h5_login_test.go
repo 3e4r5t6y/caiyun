@@ -34,7 +34,7 @@ func (tr h5LoginTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return tr.base.RoundTrip(clone)
 }
 
-func TestJWTLoginUsesCapturedH5EndpointAndPreservesBothCookies(t *testing.T) {
+func TestJWTLoginUsesCapturedH5EndpointWithoutMutatingSessionCookies(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/ycloud/api/timestamp" {
@@ -74,7 +74,7 @@ func TestJWTLoginUsesCapturedH5EndpointAndPreservesBothCookies(t *testing.T) {
 	for _, cookie := range client.GetCookies("m.mcloud.139.com") {
 		values[cookie.Name] = cookie.Value
 	}
-	if values["jwtToken"] != "fixture-jwt" || values["userDomainId"] != "fixture-domain" {
-		t.Fatal("multiple Set-Cookie fields were not preserved")
+	if values["jwtToken"] != "" || values["userDomainId"] != "" {
+		t.Fatal("JWT retrieval changed the shared session cookie jar")
 	}
 }
