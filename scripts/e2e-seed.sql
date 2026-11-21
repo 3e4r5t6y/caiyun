@@ -1,6 +1,8 @@
 -- Real Docker Compose E2E seed data.
 -- Password for e2e-admin is: E2eAdminPass123!
 
+SET NAMES utf8mb4;
+
 -- normalized_username / normalized_email are NOT derived columns: the login
 -- path queries users by normalized_username = LOWER(TRIM(username)) (migration
 -- 012), so the seed must populate them explicitly or authentication 401s.
@@ -15,6 +17,11 @@ ON DUPLICATE KEY UPDATE
   token_version = 0,
   deleted_at = NULL,
   updated_at = NOW();
+
+-- Allow the manual monthly operation to reach the Worker with no exchange accounts.
+INSERT INTO system_configs (key_name, key_value, description)
+VALUES ('exchange_enabled', 'true', 'E2E manual monthly operation')
+ON DUPLICATE KEY UPDATE key_value = VALUES(key_value);
 
 INSERT INTO accounts (id, user_id, phone, auth, token, jwt_token, platform, expire_at, cloud_count, remark, is_active, created_at, updated_at, deleted_at) VALUES
   (900001, 900001, '13900009001', 'enc:v1:AAECAwQFBgcICQoLSNfeUbhtpsSFrB3fEqq5a4psZvVjavutQYWWvHOUR+6zwNwB', 'enc:v1:EBESExQVFhcYGRobSD4TfnPzD4OtTk8yQeJ1a/9XZPsMSavsYQQh/eugcmU4vgsYOg', 'enc:v1:ICEiIyQlJicoKSory1viOrJgRpSEklu7Dk50eU9nxmKSCPdpXLue05PRi/mNHNI', 'pc', 4102415999000, 6666, 'E2E 主账号', TRUE, NOW(), NOW(), NULL)

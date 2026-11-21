@@ -262,3 +262,55 @@ func TestTyrzLoginReportsHTTPBusinessAndJSONErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomJWTLoginAndUpstreamGPLoginUseSeparateTickets(t *testing.T) {
+	tickets := 0
+	var loginHosts []string
+	client := corehttp.NewClient(corehttp.WithTransport(authRoundTripper(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case authQuerySpecTokenURL:
+			tickets++
+			return authTestResponse(req, http.StatusOK, fmt.Sprintf(`{"success":true,"code":"0","data":{"token":"ticket-%d"}}`, tickets), nil), nil
+		case tyrzTimestampURL:
+			return authTestResponse(req, http.StatusOK, `{"code":0,"result":1700000000123}`, nil), nil
+		}
+		if req.URL.Path != "/ycloud/auth-service/auth/tyrzLogin" {
+			t.Fatalf("unexpected URL: %s", req.URL)
+		}
+		loginHosts = append(loginHosts, req.URL.Host)
+		var body struct {
+			Token string `json:"token"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Token != fmt.Sprintf("ticket-%d", len(loginHosts)) {
+			t.Fatalf("login reused a consumed SSO ticket: %q", body.Token)
+		}
+		switch req.URL.Host {
+		case "m.mcloud.139.com":
+			headers := make(http.Header)
+			headers.Set("jwttoken", "main-header-jwt")
+			return authTestResponse(req, http.StatusOK, `{"code":0,"result":{"token":"ignored-json-token"}}`, headers), nil
+		case "gp.mcloud.139.com":
+			return authTestResponse(req, http.StatusOK, `{"code":0,"result":{"token":"gp-json-jwt"}}`, nil), nil
+		default:
+			t.Fatalf("unexpected login host: %s", req.URL.Host)
+			return nil, nil
+		}
+	})))
+	client.SetAuth("fixture")
+	authenticator := NewAuth(client)
+	mainJWT, sso, err := authenticator.GetJWTTokenWithSSOToken("13800000000")
+	if err != nil || mainJWT != "main-header-jwt" || sso != "ticket-1" {
+		t.Fatalf("main login: JWT=%q SSO=%q err=%v", mainJWT, sso, err)
+	}
+	client.SetJWTToken(mainJWT)
+	gpJWT, err := authenticator.GetGPJWTToken("13800000000")
+	if err != nil || gpJWT != "gp-json-jwt" || tickets != 2 || strings.Join(loginHosts, ",") != "m.mcloud.139.com,gp.mcloud.139.com" {
+		t.Fatalf("GP login: JWT=%q tickets=%d hosts=%v err=%v", gpJWT, tickets, loginHosts, err)
+	}
+	if client.GetJWTToken() != mainJWT {
+		t.Fatal("GP login overwrote the main JWT")
+	}
+}

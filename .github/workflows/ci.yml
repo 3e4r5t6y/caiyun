@@ -51,7 +51,9 @@ jobs:
       - name: Validate deployment script syntax
         working-directory: .
         run: |
-          bash -n scripts/deploy-linux.sh scripts/rollback-linux.sh scripts/health-check.sh scripts/deploy-smoke-test.sh scripts/deploy-compose.sh scripts/package-release.sh scripts/migration-smoke-test.sh scripts/generate-sbom.sh scripts/sign-release.sh scripts/import-calendar.sh scripts/rotate-encryption.sh scripts/check-no-local-docs.sh scripts/check-no-release-binaries.sh scripts/deploy-k8s.sh scripts/verify-k8s-runtime.sh scripts/verify-otel-runtime.sh scripts/verify-compose-runtime.sh scripts/verify-legacy-list-drain.sh scripts/chaos-drill.sh scripts/capacity-drill.sh scripts/collect-slo-snapshot.sh
+          for script in scripts/*.sh; do
+            bash -n "$script" || exit 1
+          done
 
       - name: Validate repository policy
         working-directory: .
@@ -90,6 +92,7 @@ jobs:
           run_check alert_metric_contract "python" "scripts/validate-alert-metric-contract.py"
           run_check dto_boundaries "python" "scripts/validate-dto-boundaries.py"
           run_check streams_cutover "python" "scripts/validate-streams-cutover.py"
+          run_check proxy_configuration "python" -m unittest discover -s scripts/regression_tests -p "test_*.py"
           if out=$(python -m unittest discover -s scripts/tests -p "test_*.py" 2>&1); then
             echo "::notice::INVARIANT_OK scripts/tests"
           else
@@ -114,12 +117,13 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.13'
+          go-version: '1.26.11'
           cache-dependency-path: backend/go.sum
 
       - name: Unit tests
         env:
           GOTOOLCHAIN: local
+          CGO_ENABLED: '1'
         run: go test ./...
 
       - name: Race detector
@@ -238,7 +242,7 @@ jobs:
 
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.13'
+          go-version: '1.26.11'
           cache-dependency-path: backend/go.sum
 
       - name: Setup Node.js
@@ -278,7 +282,7 @@ jobs:
 
   frontend:
     name: Frontend checks + E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     defaults:
       run:
@@ -447,9 +451,9 @@ jobs:
 
       - name: Run real Docker Compose E2E
         run: |
-          # 保留实时日志的同时捕获尾部,失败时以 ::error:: 注解暴露关键行。
+          # 保留完整诊断日志并输出末尾。失败时为关键行添加错误注解。
           set +e
-          bash scripts/e2e-compose.sh 2>&1 | tail -n 200 | tee "$RUNNER_TEMP/e2e.log"
+          bash scripts/e2e-compose.sh 2>&1 | tee "$RUNNER_TEMP/e2e.log" | tail -n 400
           code=${PIPESTATUS[0]}
           set -e
           if [ "$code" -ne 0 ]; then
@@ -506,7 +510,7 @@ jobs:
 
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25.13'
+          go-version: '1.26.11'
           cache-dependency-path: backend/go.sum
 
       - name: Setup Node.js
